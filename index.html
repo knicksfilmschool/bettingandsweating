@@ -166,7 +166,7 @@ footer{color:var(--mute);font-size:13px;padding:10px 0 40px}
 
 <script>
 /* ================= CONFIG ================= */
-const SHEET_ID = '15T37kILpGkYTd-RNOvQdL7r2RoKYm4mbCJVnQscZvuI';
+const SHEET_ID = 'PASTE_RESPONSES_SHEET_ID_HERE';
 const TAB = 'Responses';
 const CSV_URL = '';      // optional: a "Publish to web" CSV link, used instead of SHEET_ID
 const STAKE = 100;       // dollars per pick for the profit columns
@@ -261,7 +261,7 @@ const GAMES = [
 ];
 const SEGMENTS = [
   { key: 'Knicks Game',  label: 'Spread, ML or total', pts: 1 },
-  { key: 'Opponent Bet', label: 'Opponent bet',        pts: 2 },
+  { key: 'Opp Bet',      label: 'Opp bet',             pts: 2 },
   { key: 'Parlay',       label: 'Parlay',              pts: 3 },
   { key: 'Home Run',     label: 'Home run',            pts: 4 },
   { key: 'Best Bet',     label: 'Best bet',            pts: 5 },
@@ -276,6 +276,9 @@ const $ = id => document.getElementById(id);
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const g = (r, k) => String(r[k] ?? '').trim();
 const field = (r, p, name) => g(r, p + ': ' + name);
+/* Older sheets used "Opponent Bet" and "Bet"; newer ones use "Opp Bet" and "Bet Type". */
+const normHeader = h => String(h).trim().replace(/^Opponent Bet:/, 'Opp Bet:').replace(/^Result: Opponent Bet$/, 'Result: Opp Bet').replace(/: Bet$/, ': Bet Type');
+const SUBJECT_ALIASES = { 'Opponent (Team)': 'Opponent', 'Opponent (Player)': 'Opponent player', 'Other Player': 'Other player' };
 function num(v) {
   if (v === '' || v == null) return null;
   const n = parseFloat(String(v).replace(/[^0-9.\-]/g, ''));
@@ -303,7 +306,7 @@ function parseCSV(t) {
 }
 function toObjects(rows) {
   if (!rows.length) return [];
-  const h = rows[0].map(x => x.trim());
+  const h = rows[0].map(normHeader);
   return rows.slice(1).filter(r => r.some(c => c.trim() !== '')).map(r => Object.fromEntries(h.map((k, i) => [k, r[i] ?? ''])));
 }
 
@@ -316,7 +319,7 @@ function oppNick(game) {
 
 function readFields(r, p) {
   return {
-    subject: field(r, p, 'Subject'), name: field(r, p, 'Player name'), bet: field(r, p, 'Bet'),
+    subject: SUBJECT_ALIASES[field(r, p, 'Subject')] || field(r, p, 'Subject'), name: field(r, p, 'Player name'), bet: field(r, p, 'Bet Type'),
     ou: field(r, p, 'Over/Under'), line: field(r, p, 'Line'), period: field(r, p, 'Period'),
     details: field(r, p, 'Details'), sport: field(r, p, 'Sport'), team: field(r, p, 'Team'), opponent: field(r, p, 'Opponent')
   };
@@ -430,7 +433,7 @@ function render() {
     `<div><b>${crew.pts}</b><span>crew points</span></div>
      <div><b>${crew.w}-${crew.l}-${crew.p}</b><span>record</span></div>
      <div><b class="${cls(crew.profit)}" style="color:inherit">${money(crew.profit)}</b><span>crew profit</span></div>
-     <div><b>${crew.games}</b><span>games graded</span></div>
+     <div><b>${crew.games}</b><span>of ${state.games.length} games graded</span></div>
      <div class="lead">${leader ? `Leader: <strong>${esc(leader)}</strong>, ${players[leader].pts} pts` : 'No graded games yet'}</div>`;
 
   $('board').innerHTML =
@@ -522,7 +525,7 @@ function renderLog() {
 function demoRows() {
   const row = (name, game, segs, results) => {
     const r = { Timestamp: '', Name: name, Game: game };
-    Object.entries(segs).forEach(([p, f]) => Object.entries(f).forEach(([k, v]) => r[`${p}: ${k}`] = v));
+    Object.entries(segs).forEach(([p, f]) => Object.entries(f).forEach(([k, v]) => r[normHeader(`${p}: ${k}`)] = v));
     SEGMENTS.forEach((s, i) => r['Result: ' + s.key] = results[i] || '');
     return r;
   };
@@ -579,24 +582,41 @@ function demoRows() {
 /* ---------- load ---------- */
 const isDemo = () => !CSV_URL && (!SHEET_ID || SHEET_ID.startsWith('PASTE'));
 
+async function fetchRows(sheetParam) {
+  const url = CSV_URL || `https://docs.google.com/spreadsheets/d/${SHEET_ID.trim()}/gviz/tq?tqx=out:csv&headers=1${sheetParam ? '&sheet=' + encodeURIComponent(sheetParam) : ''}`;
+  const res = await fetch(url, { cache: 'no-store' });
+  if (!res.ok) throw new Error(`The sheet answered with error ${res.status}.`);
+  const text = await res.text();
+  if (/^\s*</.test(text)) throw new Error('The sheet sent back a sign-in page instead of data, so it isn’t shared publicly yet.');
+  const table = parseCSV(text);
+  return { headers: (table[0] || []).map(normHeader), rows: toObjects(table) };
+}
+const hasFormColumns = h => h.includes('Name') && h.includes('Game');
+
 async function load() {
   $('updated').textContent = 'Loading…';
   $('notice').innerHTML = '';
   try {
-    let rows;
+    let rows, note = '';
     if (isDemo()) {
       rows = demoRows();
-      $('notice').innerHTML = '<p class="note">Showing sample picks. Paste the responses sheet ID into SHEET_ID at the top of the script to go live.</p>';
+      note = 'Showing sample picks. Paste the responses sheet ID into SHEET_ID at the top of the script to go live.';
     } else {
-      const url = CSV_URL || `https://docs.google.com/spreadsheets/d/${SHEET_ID}/gviz/tq?tqx=out:csv&headers=1&sheet=${encodeURIComponent(TAB)}`;
-      const res = await fetch(url, { cache: 'no-store' });
-      if (!res.ok) throw new Error(`The sheet answered with error ${res.status}.`);
-      const text = await res.text();
-      if (/^\s*</.test(text)) throw new Error('The sheet sent back a sign-in page instead of data.');
-      rows = toObjects(parseCSV(text));
+      let got = await fetchRows(TAB);
+      if (!hasFormColumns(got.headers) && !CSV_URL) got = await fetchRows('');   // tab may still be called "Form Responses 1"
+      if (!hasFormColumns(got.headers)) {
+        const seen = got.headers.filter(Boolean).slice(0, 4).join(', ') || 'no column headers';
+        throw new Error(`The sheet it found has no Name and Game columns (its first columns are: ${seen}). SHEET_ID is probably pointing at the main KFS workbook instead of the form’s responses sheet.`);
+      }
+      rows = got.rows;
+      const games = new Set(rows.map(r => g(r, 'Game')).filter(Boolean)).size;
+      if (!rows.length) note = 'Connected to the responses sheet. No picks have been submitted yet.';
+      else note = `Connected. ${rows.length} form ${rows.length === 1 ? 'response' : 'responses'} across ${games} ${games === 1 ? 'game' : 'games'}. The leaderboard and chart fill in as results are graded in the Result columns.`;
     }
     state.games = buildGames(rows);
     render();
+    const anyGraded = state.games.some(gm => gm.graded);
+    if (note && (isDemo() || !anyGraded)) $('notice').innerHTML = `<p class="note">${esc(note)}</p>`;
     $('updated').textContent = 'Updated ' + new Date().toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
   } catch (e) {
     $('updated').textContent = 'Not loaded';
