@@ -166,7 +166,7 @@ footer{color:var(--mute);font-size:13px;padding:10px 0 40px}
 
 <script>
 /* ================= CONFIG ================= */
-const SHEET_ID = '1cS5LxKxpIDakk2bpqug48gEI8dhDRLTbC_tpcXhphxo';
+const SHEET_ID = '1u7H8zMQtrmrYMVfyb1FomoXYJBe9ghDcURZK82qWPL0';
 const TAB = 'Responses';
 const CSV_URL = '';      // optional: a "Publish to web" CSV link, used instead of SHEET_ID
 const STAKE = 100;       // dollars per pick for the profit columns
@@ -317,10 +317,19 @@ function oppNick(game) {
   return m[1].split(' ').pop();
 }
 
+/* Newer forms use one Line box ("o24.5", "u224.5", "-4.5", "Yes"); older ones had a separate Over/Under. */
+function splitLine(ou, raw) {
+  raw = String(raw || '').trim();
+  const m = raw.match(/^([oOuU])\s*(\d+(?:\.\d+)?)$/);
+  if (m) return { ou: /o/i.test(m[1]) ? 'Over' : 'Under', line: m[2] };
+  if (/^yes$/i.test(raw)) return { ou: 'Yes', line: '' };
+  return { ou, line: raw };
+}
+
 function readFields(r, p) {
   return {
     subject: SUBJECT_ALIASES[field(r, p, 'Subject')] || field(r, p, 'Subject'), name: field(r, p, 'Player name'), bet: field(r, p, 'Bet Type'),
-    ou: field(r, p, 'Over/Under'), line: field(r, p, 'Line'), period: field(r, p, 'Period'),
+    ...splitLine(field(r, p, 'Over/Under'), field(r, p, 'Line')), period: field(r, p, 'Period'),
     details: field(r, p, 'Details'), sport: field(r, p, 'Sport'), team: field(r, p, 'Team'), opponent: field(r, p, 'Opponent')
   };
 }
@@ -341,6 +350,7 @@ function describe(f, ctx) {
     case 'Total': s = `${who} ${ou} ${line ?? ''}`; break;
     case 'Team total': s = `${who} TT ${ou} ${line ?? ''}`; break;
     case 'Other': case '': s = f.details || who; break;
+    case 'Highest Scoring Quarter': return `${who} highest scoring quarter: ${f.period || '?'}`.replace(/\s+/g, ' ').trim();
     default: s = ou === 'Yes' || line == null ? `${who} ${f.bet}` : `${who} ${ou} ${line} ${f.bet}`;
   }
   s = (per + s).replace(/\s+/g, ' ').trim();
@@ -357,7 +367,14 @@ function profitFor(result, odds) {
 function readPick(r, seg, ctx) {
   const p = seg.key;
   let text = '', sport = '';
-  if (p === 'Parlay') {
+  const squad = p === 'Parlay' && /squad/i.test(field(r, 'Parlay', 'Type'));
+  const op = squad ? 'Squad' : p;                                   // where this pick's odds live
+  if (squad) {
+    const players = field(r, 'Squad', 'Players').split(/[,;\n]+/).map(x => x.trim()).filter(Boolean);
+    text = `Squad Bet: ${players.join(', ')} combine for ${field(r, 'Squad', 'Target')} ${field(r, 'Squad', 'Stat')}`;
+    const d = field(r, 'Squad', 'Details');
+    if (d) text += ` (${d})`;
+  } else if (p === 'Parlay') {
     const legs = [];
     for (let i = 1; i <= 4; i++) {
       const f = readFields(r, 'Parlay Leg ' + i);
@@ -379,8 +396,9 @@ function readPick(r, seg, ctx) {
   } else {
     text = describe(readFields(r, p), ctx);
   }
-  const odds = num(field(r, p, 'Odds'));
-  const boost = num(field(r, p, 'Boosted odds'));
+  const odds = num(field(r, op, 'Odds'));
+  const boost = num(field(r, op, 'Boosted odds'));                   // older forms: separate boosted price
+  if (field(r, op, 'Boosted')) text += ' (boosted)';                  // newer forms: checkbox, Odds is the boosted price
   const eff = boost ?? odds;
   const raw = g(r, 'Result: ' + p).toLowerCase();
   const result = ['win', 'loss', 'push', 'void'].includes(raw) ? raw : (text || odds != null ? 'pending' : 'empty');
@@ -389,8 +407,15 @@ function readPick(r, seg, ctx) {
 }
 
 function buildGames(rows) {
-  const byGame = new Map();
-  rows.forEach(r => { const game = g(r, 'Game'); if (game) byGame.set(game, r); }); // latest row wins
+  const byGame = new Map(), seen = new Map();
+  rows.forEach((r, i) => {
+    const game = g(r, 'Game'); if (!game) return;
+    byGame.set(game, r);                                                            // latest row wins
+    if (!seen.has(game)) seen.set(game, []);
+    seen.get(game).push(`${g(r, 'Name') || 'no name'}`);
+  });
+  state.dupes = [...seen].filter(([, who]) => who.length > 1)
+    .map(([game, who]) => `${game} has ${who.length} submissions: ${who.join(', ')}. Using the last one.`);
   const out = [];
   byGame.forEach((r, game) => {
     const opp = oppNick(game);
@@ -617,6 +642,9 @@ async function load() {
     render();
     const anyGraded = state.games.some(gm => gm.graded);
     if (note && (isDemo() || !anyGraded)) $('notice').innerHTML = `<p class="note">${esc(note)}</p>`;
+    if (!isDemo() && state.dupes && state.dupes.length) {
+      $('notice').innerHTML += `<p class="note err">Duplicate submissions: ${state.dupes.map(esc).join(' ')} Delete the extra row in the responses sheet (hiding or filtering it out isn’t enough, the site still sees hidden rows).</p>`;
+    }
     $('updated').textContent = 'Updated ' + new Date().toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
   } catch (e) {
     $('updated').textContent = 'Not loaded';
