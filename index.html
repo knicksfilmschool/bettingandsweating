@@ -63,6 +63,10 @@ h2{font-family:var(--cond);font-weight:800;font-size:32px;line-height:1;margin:0
 .scroll{overflow-x:auto;background:var(--paper);border:1px solid var(--rule)}
 table{border-collapse:collapse;width:100%;min-width:640px}
 th{background:var(--blue);color:var(--white);font-family:var(--cond);font-weight:700;font-size:17px;text-align:left;padding:9px 12px;white-space:nowrap}
+th .sort{all:unset;cursor:pointer;display:inline-flex;align-items:center;gap:4px;font:inherit;color:inherit}
+th .sort:hover,th .sort:focus-visible{text-decoration:underline;outline:none}
+th .sort .arrow{font-size:12px;opacity:.45}
+th[aria-sort] .sort .arrow{opacity:1;color:var(--orange)}
 td{padding:10px 12px;border-top:1px solid var(--rule);white-space:nowrap;font-variant-numeric:tabular-nums}
 td.num,th.num{text-align:right}
 tr.first td{background:color-mix(in srgb,var(--orange) 14%,var(--paper))}
@@ -138,7 +142,7 @@ footer{color:var(--mute);font-size:13px;padding:10px 0 40px}
 
   <section>
     <h2>Leaderboard</h2>
-    <p class="sub">Ranked by points. Dollars assume a $<span class="stake"></span> bet on every pick at the listed odds (boosted odds when taken).</p>
+    <p class="sub">Ranked by points. Click any column to sort. Dollars assume a $<span class="stake"></span> bet on every pick at the listed odds (boosted odds when taken).</p>
     <div class="scroll"><table id="board"></table></div>
   </section>
 
@@ -447,12 +451,46 @@ function stats() {
   return { players, crew, seg };
 }
 
+/* ---------- leaderboard sorting ---------- */
+// val() returns the number to sort by, or null for "no data yet" (always sorts last).
+const BOARD_COLS = [
+  { key: 'name',   label: 'Picker',       dir: 1,  val: (s, n) => n },
+  { key: 'pts',    label: 'Points',       dir: -1, num: true, val: s => s.pts },
+  { key: 'games',  label: 'Games',        dir: -1, num: true, val: s => s.games },
+  { key: 'ppg',    label: 'Pts per game', dir: -1, num: true, val: s => s.games ? s.pts / s.games : null },
+  { key: 'record', label: 'Record',       dir: -1, num: true, val: s => s.w - s.l + s.w / 1000 },
+  { key: 'win',    label: 'Win %',        dir: -1, num: true, val: s => s.w + s.l ? s.w / (s.w + s.l) : null },
+  { key: 'profit', label: 'Profit',       dir: -1, num: true, val: s => s.profit },
+  { key: 'roi',    label: 'ROI',          dir: -1, num: true, val: s => s.w + s.l ? s.profit / ((s.w + s.l) * STAKE) : null }
+];
+state.sort = { key: 'pts', dir: -1 };
+
+function sortBoard(key) {
+  const col = BOARD_COLS.find(c => c.key === key);
+  if (!col) return;
+  state.sort = state.sort.key === key ? { key, dir: -state.sort.dir } : { key, dir: col.dir };
+  render();
+  const btn = document.querySelector(`#board [data-sort="${key}"]`);
+  if (btn) btn.focus();
+}
+
 /* ---------- render ---------- */
 function render() {
   const { players, crew, seg } = stats();
   const names = Object.keys(players);
   const ranked = names.slice().sort((a, b) => players[b].pts - players[a].pts || players[b].profit - players[a].profit);
   const leader = ranked.find(n => players[n].games);
+
+  // Leaderboard order: whichever column was clicked (points by default). Pickers with no graded games stay at the bottom.
+  const col = BOARD_COLS.find(c => c.key === state.sort.key) || BOARD_COLS[1];
+  const shown = names.slice().sort((a, b) => {
+    const A = players[a], B = players[b];
+    if (col.key !== 'name' && !A.games !== !B.games) return A.games ? -1 : 1;
+    const va = col.val(A, a), vb = col.val(B, b);
+    if (va == null || vb == null) return va == null ? (vb == null ? 0 : 1) : -1;
+    const d = typeof va === 'string' ? va.localeCompare(vb) : va - vb;
+    return d * state.sort.dir || ranked.indexOf(a) - ranked.indexOf(b);
+  });
 
   $('crew').innerHTML =
     `<div><b>${crew.pts}</b><span>crew points</span></div>
@@ -462,11 +500,15 @@ function render() {
      <div class="lead">${leader ? `Leader: <strong>${esc(leader)}</strong>, ${players[leader].pts} pts` : 'No graded games yet'}</div>`;
 
   $('board').innerHTML =
-    `<thead><tr><th>Picker</th><th class="num">Points</th><th class="num">Games</th><th class="num">Pts per game</th>
-     <th class="num">Record</th><th class="num">Win %</th><th class="num">Profit</th><th class="num">ROI</th></tr></thead><tbody>` +
-    ranked.map((n, i) => {
+    `<thead><tr>${BOARD_COLS.map(c => {
+      const on = c.key === state.sort.key;
+      return `<th class="${c.num ? 'num' : ''}"${on ? ` aria-sort="${state.sort.dir > 0 ? 'ascending' : 'descending'}"` : ''}>` +
+        `<button type="button" class="sort" data-sort="${c.key}" title="Sort by ${c.label}">${c.label}` +
+        `<span class="arrow" aria-hidden="true">${on ? (state.sort.dir > 0 ? '▲' : '▼') : '↕'}</span></button></th>`;
+    }).join('')}</tr></thead><tbody>` +
+    shown.map(n => {
       const s = players[n], dec = s.w + s.l;
-      return `<tr class="${i === 0 && s.games ? 'first' : ''}"><td><span class="pname"><span class="dot" style="background:${COLORS[n] || '#888'}"></span>${esc(n)}</span></td>
+      return `<tr class="${n === leader ? 'first' : ''}"><td><span class="pname"><span class="dot" style="background:${COLORS[n] || '#888'}"></span>${esc(n)}</span></td>
         <td class="num"><strong>${s.pts}</strong></td><td class="num">${s.games}</td>
         <td class="num">${s.games ? (s.pts / s.games).toFixed(1) : '–'}</td>
         <td class="num">${s.w}-${s.l}-${s.p}</td><td class="num">${pct(s.w, dec)}</td>
@@ -653,6 +695,7 @@ async function load() {
 }
 
 document.querySelectorAll('.stake').forEach(el => el.textContent = STAKE);
+$('board').addEventListener('click', e => { const b = e.target.closest('[data-sort]'); if (b) sortBoard(b.dataset.sort); });
 $('refresh').addEventListener('click', load);
 $('fPicker').addEventListener('change', e => { state.picker = e.target.value; renderLog(); });
 $('fSearch').addEventListener('input', e => { state.q = e.target.value; renderLog(); });
