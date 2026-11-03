@@ -282,6 +282,31 @@ const g = (r, k) => String(r[k] ?? '').trim();
 const field = (r, p, name) => g(r, p + ': ' + name);
 /* Older sheets used "Opponent Bet" and "Bet"; newer ones use "Opp Bet" and "Bet Type". */
 const normHeader = h => String(h).trim().replace(/^Opponent Bet:/, 'Opp Bet:').replace(/^Result: Opponent Bet$/, 'Result: Opp Bet').replace(/: Bet$/, ': Bet Type');
+/* The sheet's header row can revert to the form's short question titles ("Subject", "Bet Type", "Line")
+   whenever the form is edited, including the nightly Game list update. This works out which section each
+   short header belongs to from the order the form lays them out in, so the labels never matter. */
+function normHeaders(list) {
+  const SEQ = ['Knicks Game', 'Opp Bet', 'Parlay Leg 1', 'Parlay Leg 2', 'Parlay Leg 3', 'Home Run', 'Best Bet'];
+  const PLAIN = ['Timestamp', 'Name', 'Game'];
+  let seg = '', k = -1;
+  return list.map(function (h0) {
+    const h = normHeader(h0);
+    const m = h.match(/^(.+?): /);
+    if (m) {                                             // already labeled ("Opp Bet: Line", "OOT Prop: Odds", "Result: Parlay")
+      const i = SEQ.indexOf(m[1]);
+      if (i >= 0) k = i;
+      if (h === 'Parlay: Type') k = 1;
+      if (m[1] !== 'Result') seg = m[1];
+      return h;
+    }
+    if (!h || PLAIN.indexOf(h) >= 0) return h;
+    if (h === 'Subject') { k++; seg = SEQ[k] || seg; return seg ? seg + ': Subject' : h; }
+    if (h === 'Type') { seg = 'Parlay'; k = 1; return 'Parlay: Type'; }
+    if (h === 'Players') seg = 'Squad';
+    if (/^Parlay Leg/.test(seg) && ['Odds', 'Boosted', 'Boosted odds', 'Details'].indexOf(h) >= 0) seg = 'Parlay';
+    return seg ? seg + ': ' + h : h;
+  });
+}
 const SUBJECT_ALIASES = { 'Opponent (Team)': 'Opponent', 'Opponent (Player)': 'Opponent player', 'Other Player': 'Other player' };
 function num(v) {
   if (v === '' || v == null) return null;
@@ -310,7 +335,7 @@ function parseCSV(t) {
 }
 function toObjects(rows) {
   if (!rows.length) return [];
-  const h = rows[0].map(normHeader);
+  const h = normHeaders(rows[0]);
   return rows.slice(1).filter(r => r.some(c => c.trim() !== '')).map(r => Object.fromEntries(h.map((k, i) => [k, r[i] ?? ''])));
 }
 
@@ -656,7 +681,7 @@ async function fetchRows(sheetParam) {
   const text = await res.text();
   if (/^\s*</.test(text)) throw new Error('The sheet sent back a sign-in page instead of data, so it isn’t shared publicly yet.');
   const table = parseCSV(text);
-  return { headers: (table[0] || []).map(normHeader), rows: toObjects(table) };
+  return { headers: normHeaders(table[0] || []), rows: toObjects(table) };
 }
 const hasFormColumns = h => h.includes('Name') && h.includes('Game');
 
