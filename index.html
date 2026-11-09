@@ -142,7 +142,7 @@ footer{color:var(--mute);font-size:13px;padding:10px 0 40px}
 
   <section>
     <h2>Leaderboard</h2>
-    <p class="sub">Ranked by points. Click any column to sort. Dollars assume a $<span class="stake"></span> bet on every pick at the listed odds (boosted odds when taken).</p>
+    <p class="sub">Ranked by points. Click any column to sort. Profit is in units, risking 1 unit on every pick at the listed odds (boosted odds when taken).</p>
     <div class="scroll"><table id="board"></table></div>
   </section>
 
@@ -173,7 +173,7 @@ footer{color:var(--mute);font-size:13px;padding:10px 0 40px}
 const SHEET_ID = '1u7H8zMQtrmrYMVfyb1FomoXYJBe9ghDcURZK82qWPL0';
 const TAB = 'Responses';
 const CSV_URL = '';      // optional: a "Publish to web" CSV link, used instead of SHEET_ID
-const STAKE = 100;       // dollars per pick for the profit columns
+const STAKE = 1;         // units risked per pick (profit and loss show in units)
 /* ========================================== */
 
 const CREW = ['Andrew', 'Jeff', 'Jon', 'Mensa', 'Shawn'];
@@ -314,7 +314,8 @@ function num(v) {
   return Number.isFinite(n) ? n : null;
 }
 const signed = n => (n > 0 ? '+' + n : String(n));
-const money = n => (n < 0 ? '−' : '+') + '$' + Math.round(Math.abs(n)).toLocaleString('en-US');
+// Units to one decimal: +2.4u, −1.0u
+const money = n => { const v = Math.round(n * 10) / 10; return (v < 0 ? '−' : '+') + Math.abs(v).toFixed(1) + 'u'; };
 const pct = (a, b) => (b ? Math.round((a / b) * 100) + '%' : '–');
 const cls = n => (n > 0 ? 'pos' : n < 0 ? 'neg' : '');
 
