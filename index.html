@@ -378,7 +378,7 @@ function describe(f, ctx) {
     case 'Spread': s = `${who} ${line == null ? '' : signed(line)}`; break;
     case 'Moneyline': s = `${who} ML`; break;
     case 'Total': s = `${who} ${ou} ${line ?? ''}`; break;
-    case 'Team total': s = `${who} TT ${ou} ${line ?? ''}`; break;
+    case 'Team total': case 'Team Total Points': s = `${who} TT ${ou} ${line ?? ''}`; break;
     case 'Other': case '': s = f.details || who; break;
     case 'Highest Scoring Quarter': return `${who} highest scoring quarter: ${f.period || '?'}`.replace(/\s+/g, ' ').trim();
     default: s = ou === 'Yes' || line == null ? `${who} ${f.bet}` : `${who} ${ou} ${line} ${f.bet}`;
